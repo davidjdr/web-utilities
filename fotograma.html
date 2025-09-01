@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Extractor de primer fotograma</title>
+  <style>
+    :root{--bg:#0f172a;--card:#111827;--muted:#94a3b8;--text:#e5e7eb;--acc:#22c55e;--border:#1f2937}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:linear-gradient(180deg,#0b1220,#0f172a 30%,#0b1220 100%);color:var(--text)}
+    .wrap{max-width:1000px;margin:40px auto;padding:24px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1{margin:0 0 6px;font-size:28px}
+    p.sub{margin:0 0 18px;color:var(--muted)}
+    .grid{display:grid;gap:16px;grid-template-columns:1fr}
+    @media(min-width:900px){.grid{grid-template-columns:1.1fr .9fr}}
+    .drop{border:2px dashed #334155;border-radius:16px;padding:22px;text-align:center;transition:.25s}
+    .drop.dragover{border-color:var(--acc);background:#0a1526}
+    .drop input{display:none}
+    .muted{color:var(--muted)}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    button{appearance:none;border:1px solid #2a3344;background:#122033;color:#e2e8f0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer;transition:.2s}
+    button.primary{background:var(--acc);color:#0b1220;border-color:#10b981}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .preview{background:#0b1220;border:1px solid var(--border);border-radius:12px;overflow:hidden;display:grid;place-items:center;min-height:220px}
+    .controls{display:grid;gap:10px}
+    label{font-size:14px;color:#cbd5e1}
+    input[type="range"]{width:100%}
+    .thumb{max-width:100%;border-radius:12px;border:1px solid var(--border)}
+    .small{font-size:12px;color:#9aa7b7}
+    .badge{display:inline-flex;align-items:center;gap:6px;background:#0e1a2b;border:1px solid #1f2b3b;border-radius:999px;color:#cfe7d6;padding:6px 10px;font-size:12px}
+    .out{display:flex;flex-direction:column;gap:8px}
+    code.k{background:#0d1726;border:1px solid #1f2937;border-radius:8px;padding:2px 6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div>
+          <h1>Extractor de primer fotograma</h1>
+          <p class="sub">Sube un video y exporta el primer fotograma como imagen. Opcional: buscar el primer fotograma «no negro».</p>
+        </div>
+        <span class="badge" title="Procesa localmente en tu navegador">⚡ Procesa local</span>
+      </div>
+      <div class="grid">
+        <section>
+          <div id="drop" class="drop">
+            <input id="file" type="file" accept="video/*" />
+            <p><strong>Arrastra y suelta tu video aquí</strong> o <label for="file" style="text-decoration:underline;cursor:pointer">explora en tu equipo</label></p>
+            <p class="small muted">Formatos comunes: MP4, MOV, WEBM… Nada sale de tu navegador.</p>
+          </div>
+          <div class="preview" id="preview">
+            <video id="vid" controls playsinline preload="metadata" crossorigin="anonymous" style="max-width:100%;max-height:280px;display:none;background:black"></video>
+            <span id="hint" class="muted">Sin video cargado</span>
+          </div>
+        </section>
+        <section class="controls">
+          <div class="row">
+            <button id="btnCapture" class="primary" disabled>Extraer primer fotograma</button>
+            <button id="btnFindNonBlack" disabled>Encontrar primer fotograma no negro</button>
+          </div>
+          <div>
+            <label for="step">Paso de búsqueda (segundos): <span id="stepVal">0.10</span></label>
+            <input id="step" type="range" min="0.01" max="0.50" step="0.01" value="0.10" />
+          </div>
+          <div>
+            <label for="thresh">Umbral de brillo (0–255): <span id="thrVal">12</span></label>
+            <input id="thresh" type="range" min="1" max="80" step="1" value="12" />
+            <p class="small">Se considera «no negro» si el brillo medio supera el umbral.</p>
+          </div>
+          <div class="row">
+            <label for="fmt">Formato:</label>
+            <select id="fmt">
+              <option value="png" selected>PNG (sin pérdida)</option>
+              <option value="jpeg">JPEG (comprimido)</option>
+              <option value="webp">WebP (comprimido)</option>
+            </select>
+            <label for="maxw">Ancho máx. (px, opcional):</label>
+            <input id="maxw" type="number" min="64" step="1" placeholder="p.ej. 1920" />
+          </div>
+          <div class="out">
+            <img id="thumb" class="thumb" alt="Previsualización del fotograma" style="display:none" />
+            <div class="row">
+              <a id="dl" download="primer_fotograma.png" style="display:none"><button class="primary">Descargar</button></a>
+              <button id="copy" style="display:none">Copiar al portapapeles</button>
+            </div>
+            <span id="status" class="small muted"></span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="cvs" style="display:none"></canvas>
+
+  <script>
+    const fileInput = document.getElementById('file');
+    const drop = document.getElementById('drop');
+    const vid = document.getElementById('vid');
+    const hint = document.getElementById('hint');
+    const btnCapture = document.getElementById('btnCapture');
+    const btnFindNonBlack = document.getElementById('btnFindNonBlack');
+    const stepRange = document.getElementById('step');
+    const stepVal = document.getElementById('stepVal');
+    const thrRange = document.getElementById('thresh');
+    const thrVal = document.getElementById('thrVal');
+    const cvs = document.getElementById('cvs');
+    const thumb = document.getElementById('thumb');
+    const dl = document.getElementById('dl');
+    const copyBtn = document.getElementById('copy');
+    const statusEl = document.getElementById('status');
+    const fmtSel = document.getElementById('fmt');
+    const maxwInput = document.getElementById('maxw');
+
+    // --- Compatibilidad / permisos ---
+    const clipboardImageSupport = typeof ClipboardItem !== 'undefined' && !!navigator.clipboard && window.isSecureContext;
+    if (!clipboardImageSupport) {
+      copyBtn.style.display = 'none';
+      copyBtn.disabled = true;
+      status('Copia al portapapeles deshabilitada (requiere HTTPS y soporte del navegador).');
+    }
+
+    stepRange.addEventListener('input', () => stepVal.textContent = (+stepRange.value).toFixed(2));
+    thrRange.addEventListener('input', () => thrVal.textContent = thrRange.value);
+
+    let currentObjectUrl = null;
+    let downloadObjectUrl = null;
+    let lastBlob = null;
+
+    function status(msg){ statusEl.textContent = msg || ''; }
+
+    const loadFile = (file) => {
+      if (!file) return;
+      if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+      const url = URL.createObjectURL(file);
+      currentObjectUrl = url;
+      vid.src = url;
+      vid.style.display = 'block';
+      hint.style.display = 'none';
+      btnCapture.disabled = true;
+      btnFindNonBlack.disabled = true;
+      status('Cargando video…');
+    };
+
+    vid.addEventListener('loadedmetadata', () => {
+      btnCapture.disabled = false;
+      btnFindNonBlack.disabled = false;
+      status(`Video cargado · duración: ${vid.duration.toFixed(2)}s · ${vid.videoWidth}×${vid.videoHeight}`);
+    });
+
+    vid.addEventListener('error', () => {
+      status('Error al cargar el video. El formato/codecs podrían no ser compatibles con tu navegador.');
+    });
+
+    fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+
+    ['dragenter','dragover'].forEach(evt => drop.addEventListener(evt, (e)=>{e.preventDefault();e.stopPropagation();drop.classList.add('dragover')}));
+    ;['dragleave','drop'].forEach(evt => drop.addEventListener(evt, (e)=>{e.preventDefault();e.stopPropagation();drop.classList.remove('dragover')}));
+    drop.addEventListener('drop', (e)=>{
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) loadFile(f);
+    });
+
+    async function ensureReady(){
+      if (vid.readyState >= 2 && isFinite(vid.duration)) return;
+      await new Promise((res)=>{
+        const on = ()=>{ cleanup(); res(); };
+        const cleanup = ()=>{
+          vid.removeEventListener('loadedmetadata', on);
+          vid.removeEventListener('loadeddata', on);
+          vid.removeEventListener('canplay', on);
+        };
+        vid.addEventListener('loadedmetadata', on, {once:true});
+        vid.addEventListener('loadeddata', on, {once:true});
+        vid.addEventListener('canplay', on, {once:true});
+      });
+    }
+
+    async function seekTo(t){
+      await ensureReady();
+      return new Promise((res, rej)=>{
+        const onSeeked = ()=>{ cleanup(); res(); };
+        const onError = ()=>{ cleanup(); rej(new Error('Error al buscar en el video (seek).')); };
+        const cleanup = ()=>{
+          vid.removeEventListener('seeked', onSeeked);
+          vid.removeEventListener('error', onError);
+        };
+        vid.addEventListener('seeked', onSeeked);
+        vid.addEventListener('error', onError);
+        const maxT = Math.max(0, (isFinite(vid.duration) ? vid.duration : 0) - 0.05);
+        try { vid.currentTime = Math.min(Math.max(t, 0), maxT); }
+        catch(e){ cleanup(); rej(e); }
+      });
+    }
+
+    async function drawFrame(){
+      const w = vid.videoWidth, h = vid.videoHeight;
+      if (!w || !h) throw new Error('Video no listo para dibujar (sin dimensiones).');
+      cvs.width = w; cvs.height = h;
+      const ctx = cvs.getContext('2d');
+      await new Promise(r => requestAnimationFrame(r));
+      ctx.drawImage(vid, 0, 0, w, h);
+      try {
+        return ctx.getImageData(0, 0, w, h);
+      } catch (e) {
+        if (String(e).includes('Tainted canvases')) {
+          throw new Error('No se puede leer pixels: Canvas bloqueado por CORS. Sube el video como archivo local (no URL remota).');
+        }
+        throw e;
+      }
+    }
+
+    function brightnessAvg(imgData){
+      const d = imgData.data; let sum=0; const n = d.length/4;
+      for (let i=0;i<d.length;i+=4){
+        const r=d[i], g=d[i+1], b=d[i+2];
+        sum += 0.2126*r + 0.7152*g + 0.0722*b;
+      }
+      return sum / n;
+    }
+
+    async function exportImage(){
+      const fmt = (fmtSel.value || 'png').toLowerCase();
+      const mime = fmt === 'jpeg' ? 'image/jpeg' : (fmt === 'webp' ? 'image/webp' : 'image/png');
+      const maxw = parseInt(maxwInput.value, 10);
+      let srcW = cvs.width, srcH = cvs.height;
+      let dstW = srcW, dstH = srcH;
+      if (Number.isFinite(maxw) && maxw > 0 && srcW > maxw){
+        const scale = maxw / srcW;
+        dstW = Math.round(srcW * scale);
+        dstH = Math.round(srcH * scale);
+      }
+      const out = document.createElement('canvas');
+      out.width = dstW; out.height = dstH;
+      const octx = out.getContext('2d');
+      octx.drawImage(cvs, 0, 0, srcW, srcH, 0, 0, dstW, dstH);
+      const blob = await new Promise(res => out.toBlob(res, mime, 0.92));
+      if (!blob) throw new Error('No se pudo generar la imagen.');
+      lastBlob = blob;
+      if (downloadObjectUrl) URL.revokeObjectURL(downloadObjectUrl);
+      const url = URL.createObjectURL(blob);
+      downloadObjectUrl = url;
+      thumb.src = url; thumb.style.display = 'block';
+      dl.href = url; dl.style.display = 'inline-block';
+      const ext = fmt === 'jpeg' ? 'jpg' : fmt;
+      dl.download = `primer_fotograma.${ext}`;
+      return {blob, url, ext, mime, width: dstW, height: dstH};
+    }
+
+    async function captureAt(time){
+      await ensureReady();
+      await seekTo(time);
+      const img = await drawFrame();
+      const avg = brightnessAvg(img).toFixed(1);
+      const out = await exportImage();
+      status(`Tiempo ${time.toFixed(2)}s · Brillo medio ${avg} · ${out.width}×${out.height} · ${(out.blob.size/1024).toFixed(0)} KB`);
+    }
+
+    btnCapture.addEventListener('click', async ()=>{
+      try{ await captureAt(0); }
+      catch(e){ status('Error: '+e.message); console.error(e); }
+    });
+
+    btnFindNonBlack.addEventListener('click', async ()=>{
+      try{
+        await ensureReady();
+        const step = parseFloat(stepRange.value);
+        const thr = parseFloat(thrRange.value);
+        const maxScan = Math.min(5, isFinite(vid.duration) ? vid.duration : 5);
+        let t = 0; let found = false; let avg = 0;
+        while (t <= maxScan){
+          await seekTo(t);
+          const img = await drawFrame();
+          avg = brightnessAvg(img);
+          if (avg >= thr){ found = true; break; }
+          t += step;
+        }
+        if (found){
+          const out = await exportImage();
+          status(`Fotograma no negro en ${t.toFixed(2)}s · Brillo medio ${avg.toFixed(1)} (umbral ${thr}) · ${out.width}×${out.height} · ${(out.blob.size/1024).toFixed(0)} KB`);
+        } else {
+          await captureAt(0);
+          status(`No se halló > umbral en ${maxScan}s. Mostrando t=0s.`);
+        }
+      }catch(e){ status('Error: '+e.message); console.error(e); }
+    });
+
+    copyBtn.addEventListener('click', async ()=>{
+      if (!clipboardImageSupport) return;
+      try{
+        if (!lastBlob){ await captureAt(0); }
+        const item = new ClipboardItem({ 'image/png': lastBlob });
+        await navigator.clipboard.write([item]);
+        status('Imagen copiada al portapapeles ✅');
+      } catch(err){
+        console.error(err);
+        status('No se pudo copiar. Descarga el PNG.');
+      }
+    });
+  </script>
+</body>
+</html>
