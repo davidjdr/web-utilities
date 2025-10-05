@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verificador de Auto</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      background: #222;
+      color: #fff;
+      font-family: sans-serif;
+      height: 100vh;
+      padding-top: 20px;
+    }
+
+    input {
+      margin: 10px;
+    }
+
+    #viewer {
+      position: relative;
+      width: 600px;
+      height: 712px; /* marco fijo */
+      border: 2px solid #555;
+      background: black;
+    }
+
+    #canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #focusBox {
+      position: absolute;
+      border: 3px solid yellow;
+      pointer-events: none;
+    }
+
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    .controls label {
+      font-size: 14px;
+    }
+
+    #message {
+      margin-top: 10px;
+      font-size: 14px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <h2>Verificador de posición del auto</h2>
+  <input type="file" accept="image/*" id="fileInput">
+
+  <div id="viewer">
+    <canvas id="canvas"></canvas>
+    <div id="focusBox"></div>
+  </div>
+
+  <div class="controls">
+    <label>Top (%): <input type="number" id="topControl" value="25" step="1" min="0" max="100"></label>
+    <label>Left (%): <input type="number" id="leftControl" value="25" step="1" min="0" max="100"></label>
+    <label>Width (%): <input type="number" id="widthControl" value="50" step="1" min="5" max="100"></label>
+    <label>Height (%): <input type="number" id="heightControl" value="35" step="1" min="5" max="100"></label>
+  </div>
+
+  <p id="message">Sube una imagen para verificar.</p>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const focusBox = document.getElementById('focusBox');
+    const message = document.getElementById('message');
+
+    const FRAME_WIDTH = 600;
+    const FRAME_HEIGHT = 712;
+    const FRAME_RATIO = FRAME_WIDTH / FRAME_HEIGHT;
+
+    const controls = {
+      top: document.getElementById('topControl'),
+      left: document.getElementById('leftControl'),
+      width: document.getElementById('widthControl'),
+      height: document.getElementById('heightControl')
+    };
+
+    canvas.width = FRAME_WIDTH;
+    canvas.height = FRAME_HEIGHT;
+
+    let img = null;
+    let drawParams = null;
+
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      img = new Image();
+      img.onload = () => {
+        computeDrawParams();
+        drawBlur();
+      };
+      img.src = URL.createObjectURL(file);
+    });
+
+    function computeDrawParams() {
+      const imgRatio = img.width / img.height;
+      let drawWidth, drawHeight, offsetX, offsetY;
+
+      if (Math.abs(imgRatio - FRAME_RATIO) < 0.01) {
+        drawWidth = FRAME_WIDTH;
+        drawHeight = FRAME_HEIGHT;
+        offsetX = 0;
+        offsetY = 0;
+        message.textContent = "✅ Imagen adaptada a la relación estándar (75:89).";
+      } else {
+        if (imgRatio > FRAME_RATIO) {
+          drawWidth = FRAME_WIDTH;
+          drawHeight = FRAME_WIDTH / imgRatio;
+          offsetX = 0;
+          offsetY = (FRAME_HEIGHT - drawHeight) / 2;
+        } else {
+          drawHeight = FRAME_HEIGHT;
+          drawWidth = FRAME_HEIGHT * imgRatio;
+          offsetX = (FRAME_WIDTH - drawWidth) / 2;
+          offsetY = 0;
+        }
+        message.textContent = "⚠️ La imagen no conserva la relación estándar (75:89), se ajustó con relleno negro.";
+      }
+
+      drawParams = {drawWidth, drawHeight, offsetX, offsetY};
+    }
+
+    function drawBlur() {
+      if (!img || !drawParams) return;
+
+      const {drawWidth, drawHeight, offsetX, offsetY} = drawParams;
+
+      ctx.clearRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+
+      // Paso 1: dibujar desenfocado
+      ctx.filter = "blur(6px)";
+      ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+
+      // Paso 2: dibujar la parte nítida
+      const top = (controls.top.value / 100) * FRAME_HEIGHT;
+      const left = (controls.left.value / 100) * FRAME_WIDTH;
+      const width = (controls.width.value / 100) * FRAME_WIDTH;
+      const height = (controls.height.value / 100) * FRAME_HEIGHT;
+
+      ctx.filter = "none";
+      ctx.drawImage(
+        img,
+        (left - offsetX) * (img.width / drawWidth),     // sx
+        (top - offsetY) * (img.height / drawHeight),   // sy
+        width * (img.width / drawWidth),               // sWidth
+        height * (img.height / drawHeight),            // sHeight
+        left, top, width, height                       // dx, dy, dWidth, dHeight
+      );
+
+      updateFocusBox();
+    }
+
+    function updateFocusBox() {
+      focusBox.style.top = controls.top.value + "%";
+      focusBox.style.left = controls.left.value + "%";
+      focusBox.style.width = controls.width.value + "%";
+      focusBox.style.height = controls.height.value + "%";
+    }
+
+    Object.values(controls).forEach(ctrl => {
+      ctrl.addEventListener('input', drawBlur);
+    });
+
+    // Inicialización con Top=25%
+    updateFocusBox();
+  </script>
+</body>
+</html>
